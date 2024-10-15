@@ -1,5 +1,6 @@
 # suppression_hbolina_single_genomic_region
-Data analysis associated with the paper "Suppression of Wolbachia-mediated male-killing in the butterfly Hypolimnas bolina involves a single genomic region" 
+
+Data analysis and visualisation associated with the paper "Suppression of Wolbachia-mediated male-killing in the butterfly Hypolimnas bolina involves a single genomic region" 
 
 Reynolds LA, Hornett EA, Jiggins CD, Hurst GDD. 2019. Suppression of Wolbachia-mediated male-killing in the butterfly Hypolimnas bolina involves a single genomic region. PeerJ 7:e7677 https://doi.org/10.7717/peerj.7677
 
