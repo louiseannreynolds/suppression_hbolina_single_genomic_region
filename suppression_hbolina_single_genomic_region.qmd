@@ -1,0 +1,624 @@
+---
+title: "Suppression of Wolbachia-mediated male-killing in the butterfly Hypolimnas bolina involves a single genomic region"
+author: "Louise Reynolds"
+format:
+  html:
+    toc: true
+    toc-location: left
+editor: source
+---  
+
+# Background
+
+Some populations of the butterfly *Hypolimnas bolina* are infected with a male-killing strain (wBol1) of the endosymbiont *Wolbachia*. At the individual level, infected females will produce all-female broods. At the population level this leads to, sometimes extraordinary, female-biased sex ratios. *H.bolina* has however evolved the ability to suppress the male-killing effect of *Wolbachia* so that infected females are able to produce broods containing both male and female offspring.
+
+Hornett et al., 2014 identified that a genomic region located on *H. bolina* chromosome 25 is essential to suppress the male-killing effects of wBol1 infection. Hornett et al. were also able to show that 7 autosomes did not contain loci necessary for male survival when infected with wBol1.
+
+# Aims
+
+Determine whether the suppression of *Wolbachia*-mediated male-killing in *H. bolina* involve changes to either a single or multiple genomic regions.
+
+# Experimental Design
+
+Markers were developed to cover all 30 autosomes as well as the Z sex chromosome. Autosomal markers were sequenced across 3 generations of a 'female-informative' mapping family and the Z chromosome marker across a 'male-informative' mapping family. These mapping families are described in [Hornett *et al.*, 2014](https://doi.org/10.1371/journal.pgen.1004822). In brief a reciprocal backcross design was used whereby a Filipino *Wolbachia*-infected female homozygous for the suppressor was crossed to a Mo'orean *Wolbachia*-infected male lacking the suppressor. This results in F1 offspring heterozygous for the suppressor. The 'female-informative' mapping family is created by backcrossing a F1 female with a suppressor negative Mo'orean male to produce the F2 generation. The 'male-informative' mapping family is created by backcrossing a heterozygous F1 male to a Mo'orean female, which lacks the suppressor.
+
+Mapping using the female-informative family was performed by identifying SNPs that were heterozygous in the F1 female parent but homozygous in the F1 male parent, these markers were then scored in the F2 offspring. As female lepidoptera don't undergo recombination, this family can be used to determine if any particular linkage group is necessary for male-killing suppression with the marker showing Mendelian segregation in F2 females but being present in all surviving F2 males.
+
+The male-informative family was used to map within a linkage group to incldue/exclude a locus of suppression on the Z sex chromosome. For this, a SNP found to be heterozygous in the male parent and hemizygous in the female parent of the male-informative family was selected.
+
+# Data Analysis
+
+This document contains code needed to replicate data analysis performed in this study using published data that is freely and publicly available.
+
+Scoring data for autosomal markers across the female-informative mapping family (n=20 females and n=7 males) is provided in [supplementary table 3: "Segregation pattern of marker variants in the female informative family"](10.7717/peerj.7677/supp-3).
+
+## Get and tidy data
+
+Download scoring data from PeerJ website and tidy so that it is ready to be used for analysis and data visualisation.
+
+```{r setup}
+#Set working directory of file to project directory
+knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file())
+knitr::opts_chunk$set(message = FALSE)
+```
+
+```{r load libraries}
+#Install and load required libraries 
+
+if (!require("tidyverse")) install.packages("tidyverse") 
+library(tidyverse)
+
+if (!require("readxl")) install.packages("readxl") 
+library(readxl)
+
+if (!require("data.table")) install.packages("data.table") 
+library(data.table)
+
+if (!require("httr")) install.packages("httr") 
+library(httr)
+
+if (!require("qtl")) install.packages("qtl") 
+library(qtl)
+```
+
+```{r download and save scoring file}
+#Download and save a local copy of the scoring data file (supplementary table 3) from PeerJ  
+
+#Path to supplementary table 3 
+s3_url = "https://dfzljdn9uc3pi.cloudfront.net/2019/7677/1/TableS3.xlsx"
+
+#Save a local version of file
+httr::GET(s3_url, write_disk("table_s3.xlsx", overwrite=TRUE))
+```
+
+```{r read scoring file into r}
+#Read data from locally saved scoring file into R
+s3<- readxl::read_xlsx("table_s3.xlsx", col_types = "text")
+```
+
+```{r create tidy dataframe}
+#Tidy up data into a tidy dataframe
+
+long<- s3 %>%
+  
+# First tidy wide format 
+#Lets add a column containing information about what generation a sample is from based on `Sample ID`. As only 2x samples for parent and grandparent generations - state generation based on full Sample ID, and all F2 samples based on the fact they start with "178304XX"
+
+  mutate(generation = case_when(str_detect(`Sample ID`, "17830108|1798") ~ "grandparents",
+                                str_detect(`Sample ID`, "^178304") ~ "F2",
+                                str_detect(`Sample ID`, "17830221|17214201") ~ "F1")
+                                ) %>%
+  #Rename `Chromosome:` column to "sex" and then for grandparents and parents/F1 generation change description to Sex e.g. change "Female Grandparent (Philippines)" to Female by keeping just first word in description 
+  rename("sex"= `Chromosome:`) %>%
+   mutate(sex = ifelse(generation %in% c("grandparents", "F1"), word(sex, 1), sex)) %>%
+  
+  #Filter out empty rows
+  filter(sex != "NA") %>%
+  
+  #Select fields of interest generation, sex, columns that start with a digit referring to chromosome number 
+    select(matches(c("generation", "sex", "^[0-9]"))) %>%
+  
+  #Convert from wide to long format
+  pivot_longer(!c(sex, generation), names_to = "linkage_group", values_to = "genotype") %>%
+
+ #Ensure that genotype strings are ordered alphabetically e.g. AG and not GA - this is for downstream work e.g. seeing if individuals have the same genotype. Unless value is NA
+  
+         mutate(genotype = purrr::map_chr(stringr::str_split(.$genotype, ""),
+               .f = function(x) {
+                 x %>%
+                  stringr::str_sort() %>%
+                   stringr::str_c(collapse = "") 
+                 })) %>%
+ #This introduces problem that changes NA to AN so no longer recognised as NA > simple solution is to convert AN back to NA
+  mutate(genotype = str_replace(genotype, "AN", "NA")) %>%
+  
+  #Convert fields to factors 
+  mutate_if(., is.character, as.factor) %>%
+  mutate(linkage_group = fct_inseq(linkage_group)) %>% #reorder linkage group levels so that they are numerically ascending 
+  mutate(sex = fct_relevel(sex, str_sort(levels(sex), numeric = TRUE))) #Order F2 sample name alphanumerically Female 1-20, Male 1-7
+```
+
+```{r missing data}
+#Check for NAs
+long %>%
+ filter(if_any(everything(), is.na))
+
+#Female grandparent for LG20 is missing - as expected 
+```
+
+## Segregation of maternal grandparent alleles into F2 generation
+
+Look at how Filipino maternal grandparent (suppressor positive) alleles segregate into the F2 generation. If a linkage group contains a locus necessary for male survival then the marker for that linkage group will be present in all surviving F2 males.
+
+```{r genotype zygosity}
+#Determine whether genotypes are heterozygous or homozygous 
+
+long<- long %>%
+    #Determine zygosity of genotypes 
+    #split genotype alleles up 
+  mutate(allele_1 = str_sub(genotype, 1,1),
+         allele_2 = str_sub(genotype,2,2)) %>%
+    #is genotype homozygous or heterozygous 
+  mutate(zygosity = case_when(allele_1 == "N" & allele_2 == "A" ~ "NA", #don't apply to NAs
+                              allele_1 == allele_2 ~ "homozygous",
+                              allele_1 != allele_2 ~ "heterozygous")) %>%
+  select(!(starts_with("allele")))
+  
+```
+
+```{r create grandparent and parental genotypes long table}
+
+#Create a table containing information about grandparent and parental genotypes that can be joined back onto the main table to compare genotypes to determine segregation of maternal grandparent alleles into F2 
+
+#Filter out grandparent and parent genotype information - require linkage_group field to join back to main table
+parental_table_long<- long %>%
+  filter(generation %in% c("grandparents", "F1")) %>%
+  
+  #concatenate generation and sex fields into single field 
+  unite(., col="generation_sex", c(generation, sex), sep="_") 
+```
+
+```{r Create grandparent genotypes wide table}
+
+#Create a table of maternal grandparent genotypes and zygosity 
+
+grandparents_wide<- parental_table_long %>%
+  filter(str_detect(generation_sex, "^grandparents")) %>% #grandparents only
+  select(!(starts_with("allele"))) %>%
+  
+  #Pivot into wide format  
+  pivot_wider(names_from = generation_sex, values_from = c(genotype, zygosity))
+```
+
+```{r Create parental genotypes wide table}
+
+#Create a table of parental genotypes
+
+parents_wide<- parental_table_long %>%
+  filter(str_detect(generation_sex, "^F1")) %>% #parents only
+  select(generation_sex, linkage_group, genotype) %>%
+  
+  #Pivot into wide format  
+  pivot_wider(names_from = generation_sex, values_from = c(genotype))
+```
+
+```{r wide table}
+#Left join parents and grandparents tables to main table
+wide<- long %>%
+  left_join(grandparents_wide) %>%
+  left_join(parents_wide) %>%
+  rename_with(., tolower, .cols = everything())
+  
+```
+
+```{r lg zygosity and genotypes}
+#Segregation of maternal grandparent alleles into the F2 generation can be determined based on zygosity of grandparents and whether f1 parental genotypes match maternal grandparent genotypes. Create a table containing this information for each linkage group
+
+lg_zygosity_and_genotypes<- wide %>%
+  mutate(male_parent_male_gparent = f1_male == genotype_grandparents_male ) %>% #Male parental genotype == male maternal grandparent genotype 
+mutate(male_parent_female_gparent = f1_male == genotype_grandparents_female ) %>% #Male parental genotype == female maternal grandparent genotype 
+    mutate(female_parent_male_gparent = f1_female == genotype_grandparents_male ) %>% #Female parental genotype == male maternal grandparent genotype 
+mutate(female_parent_female_gparent = f1_female == genotype_grandparents_female ) %>% #Female parental genotype == female maternal grandparent genotype 
+  
+select(linkage_group, zygosity_grandparents_male, zygosity_grandparents_female, male_parent_male_gparent, male_parent_female_gparent, female_parent_male_gparent, female_parent_female_gparent) %>%
+  distinct()
+```
+
+```{r zygosity genotype categories}
+#Create a table of unique combinations of grandparent zygosity and whether parental genotypes match grandparent genotypes in the dataset 
+categories_zygosity_genotypes<- lg_zygosity_and_genotypes %>% 
+  select(-linkage_group) %>%
+  distinct() 
+```
+
+```{r define zygosity allele categories}
+#There are 7x unique combinations of grandparent zygosity and whether parental alleles match grandparent alleles in the dataset. 
+#Define these categories for consistency
+
+categories_zygosity_genotypes<- categories_zygosity_genotypes %>%
+#category 1:
+        mutate(segregation_category = case_when(zygosity_grandparents_male == "homozygous" & 
+                                  zygosity_grandparents_female == "homozygous" &
+                                  male_parent_male_gparent == TRUE &
+                                  male_parent_female_gparent == FALSE &
+                                  female_parent_male_gparent == FALSE &
+                                  female_parent_female_gparent == FALSE ~ "1",
+#category 2:                
+                                  zygosity_grandparents_male == "homozygous" & 
+                                  zygosity_grandparents_female == "heterozygous" &
+                                  male_parent_male_gparent == TRUE &
+                                  male_parent_female_gparent == FALSE &
+                                  female_parent_male_gparent == FALSE &
+                                  female_parent_female_gparent == TRUE ~ "2",
+#category 3:
+                                  zygosity_grandparents_male == "homozygous" & 
+                                  zygosity_grandparents_female == "homozygous" &
+                                  male_parent_male_gparent == FALSE &
+                                  male_parent_female_gparent == TRUE &
+                                  female_parent_male_gparent == FALSE &
+                                  female_parent_female_gparent == FALSE ~ "3",
+
+#category 4:
+                                  zygosity_grandparents_male == "homozygous" & 
+                                  zygosity_grandparents_female == "heterozygous" &
+                                  male_parent_male_gparent == FALSE &
+                                  male_parent_female_gparent == FALSE &
+                                  female_parent_male_gparent == FALSE &
+                                  female_parent_female_gparent == TRUE ~ "4",
+
+#category 5:
+                                  zygosity_grandparents_male == "heterozygous" & 
+                                  zygosity_grandparents_female == "homozygous" &
+                                  male_parent_male_gparent == FALSE &
+                                  male_parent_female_gparent == FALSE &
+                                  female_parent_male_gparent == TRUE &
+                                  female_parent_female_gparent == FALSE ~ "5",
+
+#category 6:
+                                  zygosity_grandparents_male == "homozygous" & 
+                                  is.na(zygosity_grandparents_female) &
+                                  male_parent_male_gparent == TRUE &
+                                  is.na(male_parent_female_gparent) &
+                                  female_parent_male_gparent == FALSE &
+                                  is.na(female_parent_female_gparent) ~ "6",
+
+#category 7:
+                                  zygosity_grandparents_male == "heterozygous" & 
+                                  zygosity_grandparents_female == "homozygous" &
+                                  male_parent_male_gparent == FALSE &
+                                  male_parent_female_gparent == TRUE &
+                                  female_parent_male_gparent == TRUE &
+                                  female_parent_female_gparent == FALSE ~ "7")) %>%
+
+select(segregation_category, everything()) #make segregation category name first column in table 
+
+```
+
+```{r linkage group zygosity genotype categories}
+#join segregation category info to linkage group info so can identify which category each linkage group is in
+
+lg_zygosity_and_genotypes<- lg_zygosity_and_genotypes %>%
+  left_join(categories_zygosity_genotypes) %>%
+   select(c(linkage_group, segregation_category), everything()) #reorder fields 
+
+lg_zygosity_and_genotypes
+```
+
+```{r f2 }
+#Want to add information on origin of maternal allele in F2 origin to look at segregation pattern
+
+#First filter for f2 generation only 
+
+#F2 generation only 
+f2<- wide %>%
+  filter(generation == "F2") %>%
+
+#Join zygosity_and_genotypes table to F2 data so can identify which segregation category each individual is in based on linkage group. Will need to know this to identify whether F2 homozygotes/heterozygotes are of Mo'orean or Filipino origin 
+  left_join(select(lg_zygosity_and_genotypes, linkage_group, segregation_category), by=c("linkage_group"))
+  
+```
+
+```{r segregation into f2s}
+#Identify segregation pattern of maternal allele into F2 offspring - i.e. whether grandparent allele by descent in F2 offspring is of Filipino or Mo'orean origin. 
+#For each segregation category identify if F2 homozygote/heterozygote are of Mo'orean/Filipino descent 
+
+f2<- f2 %>%
+  
+#category 1: 
+  #maternal grandparent - male: homozygous
+  #maternal grandparent - female: homozygous
+  #male parent genotype == male maternal grandparent genotype: TRUE
+  #male parent genotype == female maternal grandparent genotype: FALSE
+  #female parent genotype == male maternal grandparent genotype: FALSE
+  # female parent genotype == female maternal grandparent genotype: FALSE 
+#F2 heterozygote allele must be derived from female grandparent by descent therefore:
+  # F2 heterozygotes: Filipino origin
+  # F2 homozygotes: Mo'orean origin
+  
+mutate(origin = case_when(segregation_category == 1 &
+                            zygosity == "heterozygous" ~ "Philippines",
+                            
+                            segregation_category == 1 &
+                            zygosity == "homozygous" ~ "Mo'orea",
+  
+#category 2: 
+  #maternal grandparent - male: homozygous
+  #maternal grandparent - female: heterozygous 
+  #male parent genotype == male maternal grandparent genotype: TRUE
+  #male parent genotype == female maternal grandparent genotype: FALSE
+  #female parent genotype == male maternal grandparent genotype: FALSE
+  #female parent genotype == female maternal grandparent genotype: TRUE  
+#F2 heterozygote allele must be derived from female grandparent by descent therefore:
+  # F2 heterozygotes: Filipino origin
+  # F2 homozygotes: Mo'orean origin
+                            segregation_category == 2 &
+                            zygosity == "heterozygous" ~ "Philippines",
+                            
+                            segregation_category == 2 &
+                            zygosity == "homozygous" ~ "Mo'orea",
+  
+#category 3: 
+  #maternal grandparent - male: homozygous 
+  #maternal grandparent - female: homozygous
+  #male parent genotype == male maternal grandparent genotype: FALSE
+  #male parent genotype == female maternal grandparent genotype: TRUE
+  #female parent genotype == male maternal grandparent genotype: FALSE
+  # female parent genotype == female maternal grandparent genotype: FALSE 
+#F2 heterozygote allele must be derived from male grandparent by descent therefore:
+  # F2 heterozygotes: Mo'orean origin
+  # F2 homozygotes: Filipino origin
+                            segregation_category == 3 &
+                            zygosity == "heterozygous" ~ "Mo'orea",
+                            
+                            segregation_category == 3 &
+                            zygosity == "homozygous" ~ "Philippines",
+
+#category 4: 
+  #maternal grandparent - male: homozygous
+  #maternal grandparent - female: heterozygous
+  #male parent genotype == male maternal grandparent genotype: FALSE
+  #male parent genotype == female maternal grandparent genotype: FALSE
+  #female parent genotype == male maternal grandparent genotype: FALSE
+  # female parent genotype == female maternal grandparent genotype: TRUE    
+#F2 homozygote allele must be derived from female grandparent by descent therefore:
+  # F2 heterozygotes: Mo'orean origin
+  # F2 homozygotes: Filipino origin
+                            segregation_category == 4 &
+                            zygosity == "heterozygous" ~ "Mo'orea",
+                            
+                            segregation_category == 4 &
+                            zygosity == "homozygous" ~ "Philippines",
+
+#category 5: 
+  #maternal grandparent - male: heterozygous 
+  #maternal grandparent - female: homozygous 
+  #male parent genotype == male maternal grandparent genotype: FALSE
+  #male parent genotype == female maternal grandparent genotype: FALSE
+  #female parent genotype == male maternal grandparent genotype: TRUE
+  # female parent genotype == female maternal grandparent genotype: FALSE
+#F2 homozygote allele must be derived from male grandparent by descent therefore:
+  # F2 heterozygotes: Filipino origin
+  # F2 homozygotes: Mo'orean origin
+                            segregation_category == 5 &
+                            zygosity == "heterozygous" ~ "Philippines",
+                            
+                            segregation_category == 5 &
+                            zygosity == "homozygous" ~ "Mo'orea",
+#category 6: 
+  #maternal grandparent - male: homozygous 
+  #maternal grandparent - female: NA 
+  #male parent genotype == male maternal grandparent genotype: TRUE
+  #male parent genotype == female maternal grandparent genotype: NA
+  #female parent genotype == male maternal grandparent genotype: FALSE
+  #female parent genotype == female maternal grandparent genotype: NA
+#F2 heterozygote allele must be derived from female grandparent (which could be either homozygous or heterozygous) by descent therefore:
+  # F2 heterozygotes: Filipino origin
+  # F2 homozygotes: Mo'orean origin
+                            segregation_category == 6 &
+                            zygosity == "heterozygous" ~ "Philippines",
+                            
+                            segregation_category == 6 &
+                            zygosity == "homozygous" ~ "Mo'orea",
+#category 7: 
+  #maternal grandparent - male: heterozygous 
+  #maternal grandparent - female: homozygous 
+  #male parent genotype == male maternal grandparent genotype: FALSE
+  #male parent genotype == female maternal grandparent genotype: TRUE
+  #female parent genotype == male maternal grandparent genotype: TRUE
+  # female parent genotype == female maternal grandparent genotype: FALSE 
+#F2 heterozygote allele must be derived from male grandparent by descent therefore:
+  # F2 heterozygotes: Mo'orean origin
+  # F2 homozygotes: Filipino origin
+                            segregation_category == 7 &
+                            zygosity == "heterozygous" ~ "Mo'orea",
+                            
+                            segregation_category == 7 &
+                            zygosity == "homozygous" ~ "Philippines",)) 
+
+```
+
+```{r f2 minimal dataset}
+#Create minimal dataset containing only fields required for downstream analysis of F2 segregation pattern - sex, linage_group and allele origin (Philippines, Mo'orea)
+
+f2_minimal<- f2 %>%
+  select(sex, linkage_group, origin) 
+```
+
+# Check that chosen markers are suitable for use in this study
+
+## Do autosomal markers show Mendelian segregation?
+
+Markers suitable for use in this study should show Mendelian segregation in F2 females, with half of F2 females inheriting the maternal male grandparent allele of Filipino origin and half inheriting the maternal female grandparent allele of Mo'orean origin. Use chi square to test if this is the case.
+
+```{r f2 female counts}
+# Do markers segregate in Mendelian fashion in F2 females? 
+
+#Create a table of counts of actual number of Filipino/Mo'orean origin F2s females by linkage group 
+f2_female_counts<- f2_minimal %>%
+  filter(stringr::str_detect(sex, "^Female")) %>% #Filter for females only 
+  drop_na(origin) %>% #Removed 1x NA as expected 
+  group_by(linkage_group) %>%
+  count(origin) %>%
+  pivot_wider(names_from = origin, values_from = n) 
+```
+
+```{r chi square}
+#Perform Chi Square goodness of fit test - do maternal grandparent alleles segregate in Mendelian fashion in F2 female offspring - expect 0.5 Mo'orean origin and 0.5 Filipino origin 
+
+female_chi_sq<- f2_female_counts %>%
+  rowwise() %>%
+  mutate(
+    X_squared = chisq.test(c(`Mo'orea`, `Philippines`), p = c(0.5, 0.5))$statistic,
+    p_value = chisq.test(c(`Mo'orea`, `Philippines`), p = c(0.5, 0.5))$p.value
+  )
+
+female_chi_sq  
+```
+
+Problem - e.g. lg 18 - chi square shows significant difference (α = 0.05) to what would expect under Mendelian segregation - implies marker not Mendelian and therefore not suitable for this study. However testing at the α = 0.05 significance level, could expect this so to be the case for 1 out of 20 markers by chance. Ideally would have larger female sample size to confirm marker suitability; don't have this but I do however have data for male F2 offspring. For linkage groups that don't contain a mutation necessary for male survival would expect Mendelian segregation in both males and females. So look at chi square for males and females combined for all linkage groups (except LG 25 where Filipino allele segregates into all F2 males - see section Are there any further linkage groups that contain a mutation necessary for male survival? below.)
+
+```{r f2 chi square}
+#Perform chi square including male samples 
+f2_minimal %>%
+  drop_na(origin) %>% #Removed 1x NA as expected 
+  group_by(linkage_group) %>%
+  count(origin) %>%
+  pivot_wider(names_from = origin, values_from = n) %>%
+  rowwise() %>%
+  mutate(
+    X_squared = chisq.test(c(`Mo'orea`, `Philippines`), p = c(0.5, 0.5))$statistic,
+    p_value = chisq.test(c(`Mo'orea`, `Philippines`), p = c(0.5, 0.5))$p.value
+  )
+
+```
+
+Looking at a larger sample size, happy that segregation of female grandparent alleles into F2 offspring does not differ significantly from ratios that would be expected (1:1) under Mendelian segregation. Therefore conclude that selected markers are suitable for use in this study.
+
+## Do markers cover all 30 autosomes?
+
+Want to know that the markers selected for this study cover all 30 autosomes. This can be done by showing that each marker has a unique pattern of segregation of grandparent alleles into the F2 generation. This can be done by calculating LOD scores (LOD scores - logarithm of the odds - probability that 2 loci are linked) and creating a genetic linkage map - use R/qtl package for this purpose.
+
+```{r create rqtl datafile}
+
+#Create a datafile containing relevant data in a format suitable for analysis using R/qtl package - need marker ID, dummy chromosome number, whether a locus is AA(A)/BB(B)/AB(H) for each F2 female offspring.  
+
+
+to_map_long<- f2 %>%
+  filter(stringr::str_detect(sex, "^Female")) %>% #Filter for females only
+
+#For mapping need to know if individuals are AA/AB/BB. Due to the backcross design of the mapping family, F2 offspring are either AA or AB, not BB. Create new field to use for mapping, if homozygous then 'A' and if heterozygous then 'H'. 
+  
+  mutate(mapping = case_when(zygosity == "homozygous" ~ 'A', 
+                             zygosity == "heterozygous" ~ 'H',
+                             zygosity == "NA" ~ '-')) %>%
+
+  
+  select(sex, linkage_group, mapping) %>%
+  rename(id = sex) %>%
+  pivot_wider(names_from = linkage_group, values_from = mapping)
+
+#To run, need to add chromosome data for each LG, use dummy chromosome number of 1, as haven't yet mapped markers
+chromosome<- c(" ", rep_len(1,30))
+
+#Now combine marker ID, zygosity information with dummy chromosome number to create R/qtl datafile 
+qtl_format<- rbind(chromosome, to_map_long)
+
+qtl_format
+```
+
+```{r write rqtl file to csv}
+#Write a copy of the r/QTL formatted table to csv
+fwrite(qtl_format, "qtl_format.csv", sep=",")
+```
+
+```{r summarise rqtl file}
+#Read and summarise R/qtl data file 
+
+to_map<- read.cross(format = "csv", "./", "qtl_format.csv", estimate.map=FALSE)
+
+summary(to_map)
+
+#Correctly identified data as a backcross design. Number markers (n=30) and individuals (n=20) as expected.
+```
+
+```{r LOD scores}
+#Estimate recombination fractions between all pairs of markers and calculate LOD score for test of rf = 1/2
+to_map<- est.rf(to_map)
+
+#Pull out recombination fraction and LOD score information 
+
+rf <- pull.rf(to_map)
+lod <- pull.rf(to_map, what="lod")
+
+lod
+```
+
+```{r}
+# Form linkage groups. Use a minimum LOD score of 3 as LOD >3 is good evidence of linkage 
+
+lg <- formLinkageGroups(to_map, max.rf=0.35, min.lod=3)
+table(lg[,2])
+
+#n=30 linkage groups, as expected 
+
+```
+
+Good evidence from LOD scores that markers do indeed cover all 30 autosomes.
+
+# Are there any further autosomal linkage groups that contain a mutation necessary for male survival?
+
+```{r lg necessary male survival}
+#Which linkage groups contain a mutation necessary for male survival? 
+# Filter for males where maternal grandparent allele in all surviving sons is derived from Phillipines (suppressor positive)
+
+lg_male_survival<- f2_minimal %>%
+  filter(stringr::str_detect(sex, "^Male")) %>% #Filter for males only 
+  group_by(linkage_group) %>%
+  count(origin) %>%
+  pivot_wider(names_from = origin, values_from = n, values_fill = 0) %>% #pivot wider, replace introduced NAs with 0
+  mutate(total = sum(c(`Mo'orea`, Philippines), na.rm=TRUE)) %>% #sum total males for each linkage group
+  filter(Philippines == total) #filter for linkage groups where all surviving sons have maternal grandparent allele originating from Philippines 
+
+lg_male_survival
+```
+
+Only linkage group - 25 contains a mutation necessary for male survival.
+
+# Is a mutation necessary for male survival located on the Z chromosome?
+
+Kettin is a gene that is well-established to be located on the Z chromosome in Lepidoptera. Segregation of this marker was assessed using the male-informative mapping family. If a locus necessary for male survival is not located on the Z chromosome then would expect Mendelian segregation of this marker, and overrepresentation of Filipino alleles in F2 sons if a locus necessary for survival was located on the Z chromosome.
+
+```{r Z chromosome chi-sq }
+# Chi-square test on Z marker (Kettin) - if no suppressor on Z chromosome then would expect Mendelian segregation. Over-representation (>1:1 ratio) of Filipino alleles in F2 sons could indicate that a locus necessary for male survival is located on the Z chromosome. 
+
+#Segregation of grandparent allele into male-informative F2 sons: n = 8 Filipino, n=8 Mo'orea 
+
+#Create table of male-informative F2 son segregation for Kettin marker, with chi-sq vs expected of 0.5 (if random, Mendelian segregation)
+
+`Mo'orea`<- 8
+Philippines<- 8
+
+kettin<- tibble(`Mo'orea`, Philippines) %>%
+  mutate(
+    X_squared = chisq.test(c(`Mo'orea`, `Philippines`), p = c(0.5, 0.5))$statistic,
+    p_value = chisq.test(c(`Mo'orea`, `Philippines`), p = c(0.5, 0.5))$p.value
+  )
+
+kettin
+```
+
+The Kettin marker showed random segregation in male-informative family sons. We can therefore conclude that a locus does not exist on the Z sex chromosome necessary for male survival.
+
+There is only evidence for a locus required for male survival in LG 25 and therefore can conclude that the suppression of *Wolbachia*-mediated male-killing in the butterfly *H. bolina* involves a single genomic region.
+
+# Data visualisation
+
+```{r create heatmap plot}
+
+#Create a heatmap to visualise segregation pattern in F2 generation 
+p<- f2_minimal %>%
+  ggplot(., aes(linkage_group, sex))+  
+  geom_tile(aes(fill = origin), colour="white")+
+  scale_fill_manual(breaks = c("Mo'orea", "Philippines"), values = c("#b2df8a", "#33a02c"), na.value = "white")+ #Assign light and dark greens from ColorBrewer paired palette to Mo'orean and Filipino origin alleles respectively
+  scale_y_discrete(limits=rev) + #reverse order of samples on y axis so goes F1-20, M1-7 top to bottom
+  
+  theme_classic()+
+  theme(legend.title=element_blank())+ #Remove legend title
+   labs(x="Chromosome", y="F2 Offspring")+ #relabel axes 
+  theme(axis.title.x = element_text(margin=margin(t=12, b=10)), axis.title.y=element_text(margin=margin(l=10, r=10)))+ #Resize axis labels 
+  
+ geom_hline(yintercept = 7.5, size=0.6)+ #Add a black horizontal line to visually separate male and female samples. Coordinates are 7.5 as top of 7th data row from bottom. 
+  
+  geom_rect(ymin=0, ymax=7.5, xmin=23.5, xmax=24.5, colour = "black", fill=alpha("grey",0), size=0.8) #Add a box around LG25 males to highlight the segregation of the filipino-origin suppressor-linked allele in all surviving sons 
+  
+  
+p
+```
+
+```{r save plot as tiff}
+#Save a copy of the heatmap plot as a high resolution .tiff file. 
+
+tiff("figure1.tiff", units="mm", width=297, height=210, res=300)
+print(p)
+dev.off()
+```
